@@ -5,7 +5,7 @@ import sys
 import time
 from pathlib import Path
 
-from .errors import LiveCommentError
+from .errors import LiveCommentError, YouTubeApiError
 from .oauth import (
     DEFAULT_SCOPE,
     TokenStore,
@@ -14,6 +14,7 @@ from .oauth import (
     default_token_path,
     get_access_token,
     load_oauth_client,
+    refresh_access_token,
 )
 from .youtube import LiveChat, YouTubeClient
 
@@ -198,7 +199,7 @@ def cmd_send(args: argparse.Namespace) -> int:
         print(f"Dry run: would send to {live_chat_id}: {message}")
         return 0
 
-    response = youtube.send_text_message(live_chat_id, message)
+    response, youtube = send_text_message_with_auth_retry(args, youtube, live_chat_id, message)
     print_sent(response)
     return 0
 
@@ -228,7 +229,7 @@ def cmd_chat(args: argparse.Namespace) -> int:
             continue
 
         wait_for_cooldown(last_sent_at, args.cooldown)
-        response = youtube.send_text_message(live_chat_id, message)
+        response, youtube = send_text_message_with_auth_retry(args, youtube, live_chat_id, message)
         last_sent_at = time.monotonic()
         last_message = message
         print_sent(response)
@@ -271,7 +272,7 @@ def cmd_announce(args: argparse.Namespace) -> int:
     for index in range(1, count + 1):
         message = messages[(index - 1) % len(messages)]
         print(f"Sending announcement {index}/{count}: {message}")
-        response = youtube.send_text_message(live_chat_id, message)
+        response, youtube = send_text_message_with_auth_retry(args, youtube, live_chat_id, message)
         print_sent(response)
         if index < count:
             print(f"Waiting {interval:.1f}s before the next announcement...")
@@ -285,6 +286,34 @@ def authed_youtube(args: argparse.Namespace) -> YouTubeClient:
     token_store = TokenStore(args.token)
     access_token = get_access_token(client, token_store, scope=args.scope)
     return YouTubeClient(access_token)
+
+
+def refresh_youtube(args: argparse.Namespace) -> YouTubeClient:
+    client = load_oauth_client(args.client_secrets)
+    token_store = TokenStore(args.token)
+    access_token = refresh_access_token(client, token_store, scope=args.scope)
+    return YouTubeClient(access_token)
+
+
+def send_text_message_with_auth_retry(
+    args: argparse.Namespace,
+    youtube: YouTubeClient,
+    live_chat_id: str,
+    message: str,
+) -> tuple[dict[str, object], YouTubeClient]:
+    try:
+        return youtube.send_text_message(live_chat_id, message), youtube
+    except YouTubeApiError as exc:
+        if not is_auth_error(exc):
+            raise
+
+        print("Access token was rejected. Refreshing OAuth token and retrying once...")
+        refreshed_youtube = refresh_youtube(args)
+        return refreshed_youtube.send_text_message(live_chat_id, message), refreshed_youtube
+
+
+def is_auth_error(exc: YouTubeApiError) -> bool:
+    return exc.status == 401 or exc.reason == "authError"
 
 
 def resolve_target_chat_id(youtube: YouTubeClient, args: argparse.Namespace) -> str:

@@ -686,7 +686,7 @@ python3 -B -m unittest discover -s tests
 ```text
 ................
 ----------------------------------------------------------------------
-Ran 16 tests in 0.005s
+Ran 19 tests in 0.005s
 
 OK
 ```
@@ -870,6 +870,25 @@ python3 -m livecomment send \
   --message "테스트 메시지" \
   --max-length 100
 ```
+
+### `401 authError`
+
+예시:
+
+```text
+Error: YouTube API error 401 authError: Request had invalid authentication credentials.
+```
+
+Access token이 만료되었거나 Google이 기존 토큰을 거절한 상태입니다. 장시간 `announce`를 실행하거나, 여러 터미널에서 동시에 실행하면서 한쪽에서 재인증/토큰 갱신이 일어나면 만날 수 있습니다.
+
+현재 코드는 전송 중 401이 발생하면 OAuth 토큰을 강제로 갱신하고 같은 메시지를 한 번 재시도합니다. 그래도 같은 오류가 반복되면 토큰 파일을 삭제하고 다시 인증하세요.
+
+```bash
+rm .livecomment/token.json
+python3 -m livecomment auth --client-secrets client_secret.json --force
+```
+
+그 뒤 프로그램을 다시 실행합니다. 동시에 여러 개를 띄울 때는 같은 `.livecomment/token.json`을 공유한다는 점도 기억해두세요.
 
 ### `invalid_grant`
 

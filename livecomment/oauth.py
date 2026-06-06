@@ -159,6 +159,20 @@ def get_access_token(
     if _is_valid(token):
         return str(token["access_token"])
 
+    return refresh_access_token(client, token_store, scope=scope)
+
+
+def refresh_access_token(
+    client: OAuthClient,
+    token_store: TokenStore,
+    *,
+    scope: str = DEFAULT_SCOPE,
+) -> str:
+    token = token_store.load()
+    if not token:
+        token = authorize(client, token_store, scope=scope)
+        return str(token["access_token"])
+
     refresh_token = token.get("refresh_token")
     if not refresh_token:
         token = authorize(client, token_store, scope=scope, force=True)

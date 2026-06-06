@@ -1,15 +1,32 @@
+import io
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
+from unittest.mock import patch
 
 from livecomment.cli import (
     MAX_ANNOUNCE_COUNT,
     MIN_ANNOUNCE_INTERVAL_SECONDS,
     build_parser,
+    is_auth_error,
     load_announce_messages,
+    send_text_message_with_auth_retry,
     validate_announce_schedule,
 )
-from livecomment.errors import LiveCommentError
+from livecomment.errors import LiveCommentError, YouTubeApiError
+
+
+class FakeYouTubeClient:
+    def __init__(self, responses):
+        self.responses = list(responses)
+        self.calls = []
+
+    def send_text_message(self, live_chat_id, message):
+        self.calls.append((live_chat_id, message))
+        response = self.responses.pop(0)
+        if isinstance(response, Exception):
+            raise response
+        return response
 
 
 class AnnounceScheduleTests(unittest.TestCase):
@@ -82,6 +99,41 @@ class AnnounceScheduleTests(unittest.TestCase):
     def test_rejects_negative_start_delay(self):
         with self.assertRaises(LiveCommentError):
             validate_announce_schedule(120.0, 3, -1.0)
+
+
+class AuthRetryTests(unittest.TestCase):
+    def test_detects_auth_error(self):
+        self.assertTrue(is_auth_error(YouTubeApiError(401, "authError", "bad token")))
+
+    def test_refreshes_and_retries_once_on_auth_error(self):
+        stale = FakeYouTubeClient([YouTubeApiError(401, "authError", "bad token")])
+        refreshed = FakeYouTubeClient([{"id": "message-id"}])
+
+        with (
+            patch("livecomment.cli.refresh_youtube", return_value=refreshed) as refresh,
+            patch("sys.stdout", new_callable=io.StringIO),
+        ):
+            response, youtube = send_text_message_with_auth_retry(
+                object(),
+                stale,
+                "CHAT_ID",
+                "공지 메시지",
+            )
+
+        self.assertEqual(response, {"id": "message-id"})
+        self.assertIs(youtube, refreshed)
+        self.assertEqual(stale.calls, [("CHAT_ID", "공지 메시지")])
+        self.assertEqual(refreshed.calls, [("CHAT_ID", "공지 메시지")])
+        refresh.assert_called_once()
+
+    def test_does_not_retry_non_auth_errors(self):
+        youtube = FakeYouTubeClient([YouTubeApiError(403, "forbidden", "nope")])
+
+        with patch("livecomment.cli.refresh_youtube") as refresh:
+            with self.assertRaises(YouTubeApiError):
+                send_text_message_with_auth_retry(object(), youtube, "CHAT_ID", "공지 메시지")
+
+        refresh.assert_not_called()
 
 
 if __name__ == "__main__":
