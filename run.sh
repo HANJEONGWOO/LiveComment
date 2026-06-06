@@ -14,6 +14,15 @@ if [[ ! -f client_secret.json ]]; then
   exit 1
 fi
 
+message_file="${1:-messages.txt}"
+
+if [[ ! -f "$message_file" ]]; then
+  echo "$message_file 파일을 찾을 수 없습니다." >&2
+  echo "messages.txt.example을 참고해서 메시지 파일을 먼저 만들어주세요." >&2
+  echo "예: cp messages.txt.example messages.txt" >&2
+  exit 1
+fi
+
 printf "video url 입력해주세요. "
 IFS= read -r video_url
 
@@ -22,15 +31,7 @@ if [[ -z "${video_url//[[:space:]]/}" ]]; then
   exit 1
 fi
 
-printf "message 입력해주세요. "
-IFS= read -r message
-
-if [[ -z "${message//[[:space:]]/}" ]]; then
-  echo "message가 비어 있습니다." >&2
-  exit 1
-fi
-
 exec python3 -m livecomment announce \
   --client-secrets client_secret.json \
   --video "$video_url" \
-  --message "$message"
+  --message-file "$message_file"

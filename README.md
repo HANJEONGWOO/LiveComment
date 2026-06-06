@@ -371,7 +371,15 @@ YouTube 자체의 속도 제한은 여전히 적용됩니다. 로컬 쿨다운�
 
 같은 안내 문구를 방송 중 몇 번 반복해서 보내야 한다면 `announce`를 사용합니다.
 
-가장 간단하게 실행하려면 `run.sh`를 사용할 수 있습니다. 실행하면 영상 URL과 메시지를 차례로 물어보고, 입력한 값으로 `announce`를 실행합니다.
+가장 간단하게 실행하려면 `run.sh`를 사용할 수 있습니다. 실행하면 영상 URL만 물어보고, `messages.txt`에 적힌 문구들을 순서대로 순환 전송합니다.
+
+처음에는 예시 파일을 복사해서 메시지 파일을 만듭니다.
+
+```bash
+cp messages.txt.example messages.txt
+```
+
+그 다음 `messages.txt`를 열어서 실제로 보낼 문구를 한 줄에 하나씩 적습니다.
 
 ```bash
 ./run.sh
@@ -381,22 +389,30 @@ YouTube 자체의 속도 제한은 여전히 적용됩니다. 로컬 쿨다운�
 
 ```text
 video url 입력해주세요.
-message 입력해주세요.
 ```
 
-간격과 횟수를 생략하면 코드에 정의된 기본값이 사용됩니다.
+`messages.txt` 형식:
+
+```text
+# 빈 줄과 #으로 시작하는 줄은 무시됩니다.
+채팅 매너를 지켜주세요.
+질문은 한 번만 남겨주시면 확인하겠습니다.
+방송 관련 공지는 고정 댓글도 확인해주세요.
+```
+
+간격과 횟수를 생략하면 코드에 정의된 기본값이 사용됩니다. 문구 파일을 직접 지정하려면 `--message-file`을 사용합니다.
 
 ```bash
 python3 -m livecomment announce \
   --video "https://www.youtube.com/watch?v=VIDEO_ID" \
-  --message "공지: 채팅 규칙을 지켜주세요."
+  --message-file messages.txt
 ```
 
 현재 기본값:
 
 | 항목 | 값 |
 | --- | --- |
-| `--interval` 기본값 | `MIN_ANNOUNCE_INTERVAL_SECONDS`, 현재 10초 |
+| `--interval` 기본값 | `MIN_ANNOUNCE_INTERVAL_SECONDS`, 현재 60초 |
 | `--count` 기본값 | `MAX_ANNOUNCE_COUNT`, 현재 9876543210회 |
 
 직접 간격과 횟수를 지정할 수도 있습니다.
@@ -404,19 +420,19 @@ python3 -m livecomment announce \
 ```bash
 python3 -m livecomment announce \
   --video "https://www.youtube.com/watch?v=VIDEO_ID" \
-  --message "공지: 채팅 규칙을 지켜주세요." \
+  --message-file messages.txt \
   --interval 300 \
   --count 6
 ```
 
-위 예시는 메시지를 즉시 한 번 보내고, 이후 300초마다 다시 보내서 총 6회 전송합니다.
+위 예시는 `messages.txt`의 문구를 즉시 한 번 보내고, 이후 300초마다 다음 문구를 순환해서 총 6회 전송합니다.
 
 전송 전에 계획만 확인하려면 `--dry-run`을 붙입니다.
 
 ```bash
 python3 -m livecomment announce \
   --video "https://www.youtube.com/watch?v=VIDEO_ID" \
-  --message "공지: 채팅 규칙을 지켜주세요." \
+  --message-file messages.txt \
   --interval 300 \
   --count 6 \
   --dry-run
@@ -427,7 +443,7 @@ python3 -m livecomment announce \
 ```bash
 python3 -m livecomment announce \
   --video "https://www.youtube.com/watch?v=VIDEO_ID" \
-  --message "5분 뒤 이벤트 시작합니다." \
+  --message-file messages.txt \
   --interval 300 \
   --count 3 \
   --start-delay 60
@@ -437,7 +453,7 @@ python3 -m livecomment announce \
 
 | 제한 | 값 |
 | --- | --- |
-| 최소 반복 간격 | 10초 |
+| 최소 반복 간격 | 60초 |
 | 최대 반복 횟수 | 9876543210회 |
 | 무기한 반복 | 지원하지 않음 |
 
@@ -562,12 +578,12 @@ python3 -m livecomment chat --live-chat-id "CHAT_ID"
 
 ### `announce`
 
-정해진 간격과 횟수만큼 같은 공지 메시지를 보냅니다.
+정해진 간격과 횟수만큼 공지 메시지를 보냅니다. `--message-file`을 사용하면 파일 안의 여러 문구를 순서대로 순환 전송합니다.
 
 ```bash
 python3 -m livecomment announce \
   --video "VIDEO_URL_OR_ID" \
-  --message "공지 메시지"
+  --message-file messages.txt
 ```
 
 또는:
@@ -575,7 +591,7 @@ python3 -m livecomment announce \
 ```bash
 python3 -m livecomment announce \
   --live-chat-id "CHAT_ID" \
-  --message "공지 메시지"
+  --message-file messages.txt
 ```
 
 간격과 횟수를 직접 지정하려면:
@@ -583,7 +599,7 @@ python3 -m livecomment announce \
 ```bash
 python3 -m livecomment announce \
   --video "VIDEO_URL_OR_ID" \
-  --message "공지 메시지" \
+  --message-file messages.txt \
   --interval 300 \
   --count 6
 ```
@@ -594,8 +610,9 @@ python3 -m livecomment announce \
 | --- | --- | --- |
 | `--video` | `--live-chat-id`와 둘 중 하나 필수 | YouTube 라이브 영상 URL 또는 영상 ID |
 | `--live-chat-id` | `--video`와 둘 중 하나 필수 | 이미 알고 있는 라이브 채팅 ID |
-| `--message` | 필수 | 반복해서 보낼 공지 메시지 |
-| `--interval` | `10` | 전송 사이 간격. 기본값과 최소값은 `MIN_ANNOUNCE_INTERVAL_SECONDS` |
+| `--message` | `--message-file`과 둘 중 하나 필수 | 반복해서 보낼 단일 공지 메시지 |
+| `--message-file` | `--message`와 둘 중 하나 필수 | 한 줄에 하나씩 적힌 공지 메시지 파일. 빈 줄과 `#` 주석은 무시 |
+| `--interval` | `60` | 전송 사이 간격. 기본값과 최소값은 `MIN_ANNOUNCE_INTERVAL_SECONDS` |
 | `--count` | `9876543210` | 전송 횟수. 기본값과 최대값은 `MAX_ANNOUNCE_COUNT` |
 | `--start-delay` | `0` | 첫 전송 전 대기 시간 |
 | `--max-length` | `200` | 로컬 메시지 길이 제한. `0`이면 비활성화 |
@@ -667,9 +684,9 @@ python3 -B -m unittest discover -s tests
 성공하면 다음과 비슷하게 나옵니다.
 
 ```text
-......
+................
 ----------------------------------------------------------------------
-Ran 11 tests in 0.001s
+Ran 16 tests in 0.005s
 
 OK
 ```
@@ -827,7 +844,7 @@ python3 -m livecomment chat \
 ```bash
 python3 -m livecomment announce \
   --video "VIDEO_URL_OR_ID" \
-  --message "공지 메시지" \
+  --message-file messages.txt \
   --interval 300 \
   --count 3
 ```

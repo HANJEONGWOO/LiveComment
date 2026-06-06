@@ -117,7 +117,13 @@ def add_send_args(parser: argparse.ArgumentParser, *, message_required: bool = T
 
 def add_announce_args(parser: argparse.ArgumentParser) -> None:
     add_target_args(parser)
-    parser.add_argument("--message", required=True, help="Announcement text.")
+    source = parser.add_mutually_exclusive_group(required=True)
+    source.add_argument("--message", help="Announcement text.")
+    source.add_argument(
+        "--message-file",
+        type=Path,
+        help="Path to a text file with one announcement message per line.",
+    )
     parser.add_argument(
         "--interval",
         type=float,
@@ -229,7 +235,11 @@ def cmd_chat(args: argparse.Namespace) -> int:
 
 
 def cmd_announce(args: argparse.Namespace) -> int:
-    message = normalize_message(args.message, max_length=args.max_length)
+    messages = load_announce_messages(
+        message=args.message,
+        message_file=args.message_file,
+        max_length=args.max_length,
+    )
     interval, count, start_delay = validate_announce_schedule(
         args.interval,
         args.count,
@@ -239,9 +249,12 @@ def cmd_announce(args: argparse.Namespace) -> int:
     live_chat_id = resolve_target_chat_id(youtube, args)
 
     if args.dry_run:
+        preview = messages[0]
+        if len(messages) > 1:
+            preview = f"{preview} ... (+{len(messages) - 1} more)"
         print(
             "Dry run: would send "
-            f"{count} announcement(s) to {live_chat_id} every {interval:.1f}s: {message}"
+            f"{count} announcement(s) to {live_chat_id} every {interval:.1f}s: {preview}"
         )
         if start_delay:
             print(f"First announcement would wait {start_delay:.1f}s.")
@@ -256,7 +269,8 @@ def cmd_announce(args: argparse.Namespace) -> int:
         f"every {interval:.1f}s. Press Ctrl+C to stop."
     )
     for index in range(1, count + 1):
-        print(f"Sending announcement {index}/{count}...")
+        message = messages[(index - 1) % len(messages)]
+        print(f"Sending announcement {index}/{count}: {message}")
         response = youtube.send_text_message(live_chat_id, message)
         print_sent(response)
         if index < count:
@@ -291,6 +305,38 @@ def normalize_message(message: str, *, max_length: int) -> str:
             f"Message is {len(stripped)} characters, over the local limit of {max_length}."
         )
     return stripped
+
+
+def load_announce_messages(
+    *,
+    message: str | None,
+    message_file: Path | None,
+    max_length: int,
+) -> list[str]:
+    if message is not None:
+        return [normalize_message(message, max_length=max_length)]
+
+    if message_file is None:
+        raise LiveCommentError("Either --message or --message-file is required.")
+    if not message_file.exists():
+        raise LiveCommentError(f"Message file not found: {message_file}")
+    if not message_file.is_file():
+        raise LiveCommentError(f"Message file is not a file: {message_file}")
+
+    messages = []
+    with message_file.open("r", encoding="utf-8") as file:
+        for line_number, line in enumerate(file, start=1):
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#"):
+                continue
+            try:
+                messages.append(normalize_message(stripped, max_length=max_length))
+            except LiveCommentError as exc:
+                raise LiveCommentError(f"{message_file}:{line_number}: {exc}") from exc
+
+    if not messages:
+        raise LiveCommentError(f"Message file has no usable messages: {message_file}")
+    return messages
 
 
 def validate_announce_schedule(interval: float, count: int, start_delay: float) -> tuple[float, int, float]:
