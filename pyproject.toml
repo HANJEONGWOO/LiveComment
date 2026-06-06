@@ -1,0 +1,13 @@
+[project]
+name = "livecomment"
+version = "0.1.0"
+description = "Manual YouTube live chat sender CLI"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.scripts]
+livecomment = "livecomment.cli:main"
+
+[tool.pytest.ini_options]
+pythonpath = ["."]

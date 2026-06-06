@@ -1,0 +1,340 @@
+from __future__ import annotations
+
+import argparse
+import sys
+import time
+from pathlib import Path
+
+from .errors import LiveCommentError
+from .oauth import (
+    DEFAULT_SCOPE,
+    TokenStore,
+    authorize,
+    default_client_secrets_path,
+    default_token_path,
+    get_access_token,
+    load_oauth_client,
+)
+from .youtube import LiveChat, YouTubeClient
+
+MIN_ANNOUNCE_INTERVAL_SECONDS = 60.0
+MAX_ANNOUNCE_COUNT = 9876543210
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+
+    try:
+        return int(args.func(args))
+    except KeyboardInterrupt:
+        print("\nStopped.", file=sys.stderr)
+        return 130
+    except LiveCommentError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="livecomment",
+        description="Send manual messages and bounded announcements to a YouTube live chat.",
+    )
+    parser.set_defaults(func=lambda args: parser.print_help() or 0)
+
+    shared_auth = argparse.ArgumentParser(add_help=False)
+    shared_auth.add_argument(
+        "--client-secrets",
+        type=Path,
+        default=default_client_secrets_path(),
+        help="Google OAuth client secrets JSON path.",
+    )
+    shared_auth.add_argument(
+        "--token",
+        type=Path,
+        default=default_token_path(),
+        help="OAuth token cache path.",
+    )
+    shared_auth.add_argument(
+        "--scope",
+        default=DEFAULT_SCOPE,
+        help="OAuth scope to request.",
+    )
+
+    subparsers = parser.add_subparsers(dest="command")
+
+    auth = subparsers.add_parser("auth", parents=[shared_auth], help="Authorize this app.")
+    auth.add_argument("--force", action="store_true", help="Run OAuth even if a token exists.")
+    auth.set_defaults(func=cmd_auth)
+
+    resolve = subparsers.add_parser(
+        "resolve",
+        parents=[shared_auth],
+        help="Resolve a video URL or ID to its active live chat ID.",
+    )
+    resolve.add_argument("--video", required=True, help="YouTube live video URL or ID.")
+    resolve.set_defaults(func=cmd_resolve)
+
+    send = subparsers.add_parser("send", parents=[shared_auth], help="Send one chat message.")
+    add_send_args(send)
+    send.set_defaults(func=cmd_send)
+
+    chat = subparsers.add_parser("chat", parents=[shared_auth], help="Open interactive sender.")
+    add_send_args(chat, message_required=False)
+    chat.add_argument(
+        "--cooldown",
+        type=float,
+        default=7.0,
+        help="Minimum seconds between sent messages.",
+    )
+    chat.set_defaults(func=cmd_chat)
+
+    announce = subparsers.add_parser(
+        "announce",
+        parents=[shared_auth],
+        help="Send a bounded recurring announcement.",
+    )
+    add_announce_args(announce)
+    announce.set_defaults(func=cmd_announce)
+
+    return parser
+
+
+def add_send_args(parser: argparse.ArgumentParser, *, message_required: bool = True) -> None:
+    add_target_args(parser)
+    parser.add_argument(
+        "--message",
+        required=message_required,
+        help="Message text. If omitted in chat mode, messages are read from stdin.",
+    )
+    parser.add_argument(
+        "--allow-repeat",
+        action="store_true",
+        help="Allow the exact same message twice in a row.",
+    )
+    add_message_guard_args(parser)
+
+
+def add_announce_args(parser: argparse.ArgumentParser) -> None:
+    add_target_args(parser)
+    parser.add_argument("--message", required=True, help="Announcement text.")
+    parser.add_argument(
+        "--interval",
+        type=float,
+        default=MIN_ANNOUNCE_INTERVAL_SECONDS,
+        help=(
+            "Seconds between announcements. "
+            f"Default/minimum: {MIN_ANNOUNCE_INTERVAL_SECONDS:.0f}."
+        ),
+    )
+    parser.add_argument(
+        "--count",
+        type=int,
+        default=MAX_ANNOUNCE_COUNT,
+        help=f"Number of announcements to send. Default/maximum: {MAX_ANNOUNCE_COUNT}.",
+    )
+    parser.add_argument(
+        "--start-delay",
+        type=float,
+        default=0.0,
+        help="Seconds to wait before the first announcement.",
+    )
+    add_message_guard_args(parser)
+
+
+def add_target_args(parser: argparse.ArgumentParser) -> None:
+    target = parser.add_mutually_exclusive_group(required=True)
+    target.add_argument("--video", help="YouTube live video URL or ID.")
+    target.add_argument("--live-chat-id", help="Known YouTube live chat ID.")
+
+
+def add_message_guard_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--max-length",
+        type=int,
+        default=200,
+        help="Local message length guard. Set to 0 to disable.",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Resolve and validate, but do not send.",
+    )
+
+
+def cmd_auth(args: argparse.Namespace) -> int:
+    client = load_oauth_client(args.client_secrets)
+    token = authorize(
+        client,
+        TokenStore(args.token),
+        scope=args.scope,
+        force=args.force,
+    )
+    scope = token.get("scope", args.scope)
+    print(f"Authorized. Token saved to {args.token}")
+    print(f"Scope: {scope}")
+    return 0
+
+
+def cmd_resolve(args: argparse.Namespace) -> int:
+    youtube = authed_youtube(args)
+    chat = youtube.resolve_live_chat(args.video)
+    print_live_chat(chat)
+    return 0
+
+
+def cmd_send(args: argparse.Namespace) -> int:
+    message = normalize_message(args.message, max_length=args.max_length)
+    youtube = authed_youtube(args)
+    live_chat_id = resolve_target_chat_id(youtube, args)
+
+    if args.dry_run:
+        print(f"Dry run: would send to {live_chat_id}: {message}")
+        return 0
+
+    response = youtube.send_text_message(live_chat_id, message)
+    print_sent(response)
+    return 0
+
+
+def cmd_chat(args: argparse.Namespace) -> int:
+    youtube = authed_youtube(args)
+    live_chat_id = resolve_target_chat_id(youtube, args)
+
+    if args.dry_run:
+        print(f"Dry run: ready to send to {live_chat_id}")
+        return 0
+
+    print(f"Ready. Sending to live chat {live_chat_id}. Type /quit to exit.")
+    last_sent_at = 0.0
+    last_message = None
+
+    while True:
+        raw = input("> ")
+        if raw.strip() in {"/quit", "/exit"}:
+            return 0
+        if not raw.strip():
+            continue
+
+        message = normalize_message(raw, max_length=args.max_length)
+        if message == last_message and not args.allow_repeat:
+            print("Skipped duplicate message. Use --allow-repeat to allow it.")
+            continue
+
+        wait_for_cooldown(last_sent_at, args.cooldown)
+        response = youtube.send_text_message(live_chat_id, message)
+        last_sent_at = time.monotonic()
+        last_message = message
+        print_sent(response)
+
+
+def cmd_announce(args: argparse.Namespace) -> int:
+    message = normalize_message(args.message, max_length=args.max_length)
+    interval, count, start_delay = validate_announce_schedule(
+        args.interval,
+        args.count,
+        args.start_delay,
+    )
+    youtube = authed_youtube(args)
+    live_chat_id = resolve_target_chat_id(youtube, args)
+
+    if args.dry_run:
+        print(
+            "Dry run: would send "
+            f"{count} announcement(s) to {live_chat_id} every {interval:.1f}s: {message}"
+        )
+        if start_delay:
+            print(f"First announcement would wait {start_delay:.1f}s.")
+        return 0
+
+    if start_delay:
+        print(f"Waiting {start_delay:.1f}s before the first announcement...")
+        time.sleep(start_delay)
+
+    print(
+        f"Ready. Sending {count} announcement(s) to live chat {live_chat_id} "
+        f"every {interval:.1f}s. Press Ctrl+C to stop."
+    )
+    for index in range(1, count + 1):
+        print(f"Sending announcement {index}/{count}...")
+        response = youtube.send_text_message(live_chat_id, message)
+        print_sent(response)
+        if index < count:
+            print(f"Waiting {interval:.1f}s before the next announcement...")
+            time.sleep(interval)
+
+    return 0
+
+
+def authed_youtube(args: argparse.Namespace) -> YouTubeClient:
+    client = load_oauth_client(args.client_secrets)
+    token_store = TokenStore(args.token)
+    access_token = get_access_token(client, token_store, scope=args.scope)
+    return YouTubeClient(access_token)
+
+
+def resolve_target_chat_id(youtube: YouTubeClient, args: argparse.Namespace) -> str:
+    if args.live_chat_id:
+        return str(args.live_chat_id)
+
+    chat = youtube.resolve_live_chat(args.video)
+    print_live_chat(chat)
+    return chat.live_chat_id
+
+
+def normalize_message(message: str, *, max_length: int) -> str:
+    stripped = message.strip()
+    if not stripped:
+        raise LiveCommentError("Message is empty.")
+    if max_length > 0 and len(stripped) > max_length:
+        raise LiveCommentError(
+            f"Message is {len(stripped)} characters, over the local limit of {max_length}."
+        )
+    return stripped
+
+
+def validate_announce_schedule(interval: float, count: int, start_delay: float) -> tuple[float, int, float]:
+    if interval < MIN_ANNOUNCE_INTERVAL_SECONDS:
+        raise LiveCommentError(
+            f"Announcement interval must be at least {MIN_ANNOUNCE_INTERVAL_SECONDS:.0f} seconds."
+        )
+    if count < 1:
+        raise LiveCommentError("Announcement count must be at least 1.")
+    if count > MAX_ANNOUNCE_COUNT:
+        raise LiveCommentError(f"Announcement count must be at most {MAX_ANNOUNCE_COUNT}.")
+    if start_delay < 0:
+        raise LiveCommentError("Start delay cannot be negative.")
+    return interval, count, start_delay
+
+
+def wait_for_cooldown(last_sent_at: float, cooldown: float) -> None:
+    if cooldown <= 0 or last_sent_at <= 0:
+        return
+    elapsed = time.monotonic() - last_sent_at
+    remaining = cooldown - elapsed
+    if remaining > 0:
+        print(f"Waiting {remaining:.1f}s for cooldown...")
+        time.sleep(remaining)
+
+
+def print_live_chat(chat: LiveChat) -> None:
+    print(f"Video: {chat.video_id}")
+    if chat.title:
+        print(f"Title: {chat.title}")
+    print(f"Live chat ID: {chat.live_chat_id}")
+
+
+def print_sent(response: dict[str, object]) -> None:
+    message_id = response.get("id", "(no id)")
+    snippet = response.get("snippet")
+    published_at = None
+    if isinstance(snippet, dict):
+        published_at = snippet.get("publishedAt")
+    if published_at:
+        print(f"Sent: {message_id} at {published_at}")
+    else:
+        print(f"Sent: {message_id}")
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
