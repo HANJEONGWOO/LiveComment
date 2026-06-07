@@ -18,7 +18,7 @@ from .oauth import (
 )
 from .youtube import LiveChat, YouTubeClient
 
-MIN_ANNOUNCE_INTERVAL_SECONDS = 60.0
+MIN_ANNOUNCE_INTERVAL_SECONDS = 120.0
 MAX_ANNOUNCE_COUNT = 9876543210
 
 
