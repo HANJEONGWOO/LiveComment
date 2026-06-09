@@ -9,11 +9,13 @@ from livecomment.cli import (
     MIN_ANNOUNCE_INTERVAL_SECONDS,
     build_parser,
     is_auth_error,
+    is_stream_auth_error,
     load_announce_messages,
     send_text_message_with_auth_retry,
     validate_announce_schedule,
 )
 from livecomment.errors import LiveCommentError, YouTubeApiError
+from livecomment.streaming import build_prefixed_message, extract_up_trigger
 
 
 class FakeYouTubeClient:
@@ -100,10 +102,47 @@ class AnnounceScheduleTests(unittest.TestCase):
         with self.assertRaises(LiveCommentError):
             validate_announce_schedule(120.0, 3, -1.0)
 
+    def test_parser_defaults_watch_up_to_message_file(self):
+        args = build_parser().parse_args(
+            [
+                "watch-up",
+                "--live-chat-id",
+                "CHAT_ID",
+                "--dry-run",
+            ]
+        )
+
+        self.assertEqual(args.message_file, Path("messages.txt"))
+        self.assertEqual(args.interval, MIN_ANNOUNCE_INTERVAL_SECONDS)
+
+
+class UpTriggerTests(unittest.TestCase):
+    def test_extracts_up_trigger(self):
+        self.assertEqual(extract_up_trigger("모카업 ❤❤❤"), "모카업")
+
+    def test_extracts_last_up_trigger(self):
+        self.assertEqual(extract_up_trigger("초코업 모카업!!"), "모카업")
+
+    def test_returns_none_without_up_trigger(self):
+        self.assertIsNone(extract_up_trigger("그냥 채팅"))
+
+    def test_builds_prefixed_message(self):
+        self.assertEqual(
+            build_prefixed_message("모카업", "사랑해 ❤❤❤", max_length=200),
+            "모카업 사랑해 ❤❤❤",
+        )
+
+    def test_rejects_too_long_prefixed_message(self):
+        with self.assertRaises(LiveCommentError):
+            build_prefixed_message("모카업", "사랑해", max_length=5)
+
 
 class AuthRetryTests(unittest.TestCase):
     def test_detects_auth_error(self):
         self.assertTrue(is_auth_error(YouTubeApiError(401, "authError", "bad token")))
+
+    def test_detects_stream_auth_error(self):
+        self.assertTrue(is_stream_auth_error(LiveCommentError("streamList failed: UNAUTHENTICATED")))
 
     def test_refreshes_and_retries_once_on_auth_error(self):
         stale = FakeYouTubeClient([YouTubeApiError(401, "authError", "bad token")])

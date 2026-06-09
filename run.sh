@@ -3,8 +3,13 @@ set -euo pipefail
 
 cd -- "$(dirname -- "${BASH_SOURCE[0]}")"
 
-if ! command -v python3 >/dev/null 2>&1; then
-  echo "python3를 찾을 수 없습니다." >&2
+python_bin="${LIVECOMMENT_PYTHON:-.venv/bin/python}"
+
+if [[ ! -x "$python_bin" ]]; then
+  echo "$python_bin 실행 파일을 찾을 수 없습니다." >&2
+  echo "먼저 현재 폴더에서 가상환경을 만들고 stream 의존성을 설치해주세요." >&2
+  echo "예: python3 -m venv .venv" >&2
+  echo "예: .venv/bin/python -m pip install -e '.[stream]'" >&2
   exit 1
 fi
 
@@ -31,7 +36,7 @@ if [[ -z "${video_url//[[:space:]]/}" ]]; then
   exit 1
 fi
 
-exec python3 -m livecomment announce \
+exec "$python_bin" -m livecomment watch-up \
   --client-secrets client_secret.json \
   --video "$video_url" \
   --message-file "$message_file"

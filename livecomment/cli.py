@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -17,6 +18,12 @@ from .oauth import (
     refresh_access_token,
 )
 from .youtube import LiveChat, YouTubeClient
+from .streaming import (
+    UpTriggerState,
+    build_prefixed_message,
+    extract_up_trigger,
+    stream_live_chat_messages,
+)
 
 MIN_ANNOUNCE_INTERVAL_SECONDS = 120.0
 MAX_ANNOUNCE_COUNT = 9876543210
@@ -98,6 +105,14 @@ def build_parser() -> argparse.ArgumentParser:
     add_announce_args(announce)
     announce.set_defaults(func=cmd_announce)
 
+    watch_up = subparsers.add_parser(
+        "watch-up",
+        parents=[shared_auth],
+        help="Use streamList to react to chat messages ending with '업'.",
+    )
+    add_watch_up_args(watch_up)
+    watch_up.set_defaults(func=cmd_watch_up)
+
     return parser
 
 
@@ -145,6 +160,44 @@ def add_announce_args(parser: argparse.ArgumentParser) -> None:
         type=float,
         default=0.0,
         help="Seconds to wait before the first announcement.",
+    )
+    add_message_guard_args(parser)
+
+
+def add_watch_up_args(parser: argparse.ArgumentParser) -> None:
+    add_target_args(parser)
+    parser.add_argument(
+        "--message-file",
+        type=Path,
+        default=Path("messages.txt"),
+        help="Path to a text file with one message suffix per line.",
+    )
+    parser.add_argument(
+        "--interval",
+        type=float,
+        default=MIN_ANNOUNCE_INTERVAL_SECONDS,
+        help=(
+            "Seconds between sent responses. "
+            f"Default/minimum: {MIN_ANNOUNCE_INTERVAL_SECONDS:.0f}."
+        ),
+    )
+    parser.add_argument(
+        "--count",
+        type=int,
+        default=MAX_ANNOUNCE_COUNT,
+        help=f"Number of responses to send. Default/maximum: {MAX_ANNOUNCE_COUNT}.",
+    )
+    parser.add_argument(
+        "--start-delay",
+        type=float,
+        default=0.0,
+        help="Seconds to wait before sending can start.",
+    )
+    parser.add_argument(
+        "--stream-max-results",
+        type=int,
+        default=200,
+        help="Maximum chat messages per streamList response. Minimum accepted by YouTube: 200.",
     )
     add_message_guard_args(parser)
 
@@ -281,6 +334,123 @@ def cmd_announce(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_watch_up(args: argparse.Namespace) -> int:
+    messages = load_announce_messages(
+        message=None,
+        message_file=args.message_file,
+        max_length=args.max_length,
+    )
+    interval, count, start_delay = validate_announce_schedule(
+        args.interval,
+        args.count,
+        args.start_delay,
+    )
+    if args.stream_max_results < 200:
+        raise LiveCommentError("streamList max results must be at least 200.")
+
+    youtube = authed_youtube(args)
+    live_chat_id = resolve_target_chat_id(youtube, args)
+
+    if args.dry_run:
+        print(
+            "Dry run: would watch streamList for '*업' messages and send "
+            f"{count} response(s) to {live_chat_id} every {interval:.1f}s."
+        )
+        print(f"Message file: {args.message_file}")
+        return 0
+
+    state = UpTriggerState()
+    stop_event = threading.Event()
+    watcher = threading.Thread(
+        target=watch_up_triggers,
+        args=(args, live_chat_id, state, stop_event),
+        daemon=True,
+    )
+    watcher.start()
+
+    if start_delay:
+        print(f"Waiting {start_delay:.1f}s before sending can start...")
+        time.sleep(start_delay)
+
+    print(
+        f"Ready. Watching streamList for '*업' messages and sending up to {count} "
+        f"response(s) every {interval:.1f}s. Press Ctrl+C to stop."
+    )
+    sent_count = 0
+    try:
+        while sent_count < count:
+            if stop_event.is_set():
+                raise LiveCommentError("streamList watcher stopped.")
+
+            trigger = state.latest_trigger()
+            if not trigger:
+                print(f"No '*업' trigger seen yet. Waiting {interval:.1f}s...")
+                time.sleep(interval)
+                continue
+
+            suffix = messages[sent_count % len(messages)]
+            try:
+                message = build_prefixed_message(trigger, suffix, max_length=args.max_length)
+            except LiveCommentError as exc:
+                print(f"Skipped response: {exc}")
+                time.sleep(interval)
+                continue
+
+            print(f"Sending response {sent_count + 1}/{count}: {message}")
+            response, youtube = send_text_message_with_auth_retry(args, youtube, live_chat_id, message)
+            state.mark_sent(response)
+            print_sent(response)
+            sent_count += 1
+            if sent_count < count:
+                print(f"Waiting {interval:.1f}s before the next response...")
+                time.sleep(interval)
+    finally:
+        stop_event.set()
+
+    return 0
+
+
+def watch_up_triggers(
+    args: argparse.Namespace,
+    live_chat_id: str,
+    state: UpTriggerState,
+    stop_event: threading.Event,
+) -> None:
+    while not stop_event.is_set():
+        client = load_oauth_client(args.client_secrets)
+        token_store = TokenStore(args.token)
+        access_token = get_access_token(client, token_store, scope=args.scope)
+        try:
+            for chat_message in stream_live_chat_messages(
+                access_token=access_token,
+                live_chat_id=live_chat_id,
+                stop_event=stop_event,
+                max_results=args.stream_max_results,
+            ):
+                if stop_event.is_set():
+                    return
+                if chat_message.message_id and state.is_sent_message(chat_message.message_id):
+                    continue
+                trigger = extract_up_trigger(chat_message.text)
+                if not trigger:
+                    continue
+                state.update_trigger(trigger, chat_message.message_id)
+                author = chat_message.author_name or "unknown"
+                print(f"Detected trigger from {author}: {trigger}")
+        except LiveCommentError as exc:
+            if stop_event.is_set():
+                return
+            if is_stream_auth_error(exc):
+                print("streamList access token was rejected. Refreshing OAuth token...")
+                client = load_oauth_client(args.client_secrets)
+                token_store = TokenStore(args.token)
+                refresh_access_token(client, token_store, scope=args.scope)
+                continue
+            print(f"streamList watcher stopped: {exc}", file=sys.stderr)
+            stop_event.set()
+            return
+
+
 def authed_youtube(args: argparse.Namespace) -> YouTubeClient:
     client = load_oauth_client(args.client_secrets)
     token_store = TokenStore(args.token)
@@ -314,6 +484,11 @@ def send_text_message_with_auth_retry(
 
 def is_auth_error(exc: YouTubeApiError) -> bool:
     return exc.status == 401 or exc.reason == "authError"
+
+
+def is_stream_auth_error(exc: LiveCommentError) -> bool:
+    message = str(exc)
+    return "UNAUTHENTICATED" in message or "auth" in message.lower()
 
 
 def resolve_target_chat_id(youtube: YouTubeClient, args: argparse.Namespace) -> str:
