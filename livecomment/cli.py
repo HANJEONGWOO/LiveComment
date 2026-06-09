@@ -19,6 +19,7 @@ from .oauth import (
 )
 from .youtube import LiveChat, YouTubeClient
 from .streaming import (
+    StreamListError,
     UpTriggerState,
     build_prefixed_message,
     extract_up_trigger,
@@ -27,6 +28,8 @@ from .streaming import (
 
 MIN_ANNOUNCE_INTERVAL_SECONDS = 120.0
 MAX_ANNOUNCE_COUNT = 9876543210
+DEFAULT_QUOTA_RETRY_DELAY_SECONDS = 900.0
+DEFAULT_QUOTA_MAX_RETRIES = 0
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -220,6 +223,18 @@ def add_message_guard_args(parser: argparse.ArgumentParser) -> None:
         action="store_true",
         help="Resolve and validate, but do not send.",
     )
+    parser.add_argument(
+        "--quota-retry-delay",
+        type=float,
+        default=DEFAULT_QUOTA_RETRY_DELAY_SECONDS,
+        help="Seconds to wait before retrying after quota/resource exhaustion.",
+    )
+    parser.add_argument(
+        "--quota-max-retries",
+        type=int,
+        default=DEFAULT_QUOTA_MAX_RETRIES,
+        help="Maximum quota/resource retry count. 0 means unlimited.",
+    )
 
 
 def cmd_auth(args: argparse.Namespace) -> int:
@@ -245,6 +260,7 @@ def cmd_resolve(args: argparse.Namespace) -> int:
 
 def cmd_send(args: argparse.Namespace) -> int:
     message = normalize_message(args.message, max_length=args.max_length)
+    validate_quota_retry_settings(args)
     youtube = authed_youtube(args)
     live_chat_id = resolve_target_chat_id(youtube, args)
 
@@ -258,6 +274,7 @@ def cmd_send(args: argparse.Namespace) -> int:
 
 
 def cmd_chat(args: argparse.Namespace) -> int:
+    validate_quota_retry_settings(args)
     youtube = authed_youtube(args)
     live_chat_id = resolve_target_chat_id(youtube, args)
 
@@ -294,6 +311,7 @@ def cmd_announce(args: argparse.Namespace) -> int:
         message_file=args.message_file,
         max_length=args.max_length,
     )
+    validate_quota_retry_settings(args)
     interval, count, start_delay = validate_announce_schedule(
         args.interval,
         args.count,
@@ -347,6 +365,7 @@ def cmd_watch_up(args: argparse.Namespace) -> int:
     )
     if args.stream_max_results < 200:
         raise LiveCommentError("streamList max results must be at least 200.")
+    validate_quota_retry_settings(args)
 
     youtube = authed_youtube(args)
     live_chat_id = resolve_target_chat_id(youtube, args)
@@ -416,6 +435,7 @@ def watch_up_triggers(
     state: UpTriggerState,
     stop_event: threading.Event,
 ) -> None:
+    quota_retries = 0
     while not stop_event.is_set():
         client = load_oauth_client(args.client_secrets)
         token_store = TokenStore(args.token)
@@ -437,6 +457,7 @@ def watch_up_triggers(
                 state.update_trigger(trigger, chat_message.message_id)
                 author = chat_message.author_name or "unknown"
                 print(f"Detected trigger from {author}: {trigger}")
+            quota_retries = 0
         except LiveCommentError as exc:
             if stop_event.is_set():
                 return
@@ -445,6 +466,24 @@ def watch_up_triggers(
                 client = load_oauth_client(args.client_secrets)
                 token_store = TokenStore(args.token)
                 refresh_access_token(client, token_store, scope=args.scope)
+                continue
+            if is_stream_quota_error(exc):
+                quota_retries += 1
+                if args.quota_max_retries and quota_retries > args.quota_max_retries:
+                    print(
+                        "streamList quota/resource retry limit reached. "
+                        f"Last error: {exc}",
+                        file=sys.stderr,
+                    )
+                    stop_event.set()
+                    return
+                print(
+                    "streamList quota/resource exhausted. "
+                    f"Waiting {args.quota_retry_delay:.1f}s before retry "
+                    f"{format_retry_count(quota_retries, args.quota_max_retries)}...",
+                    file=sys.stderr,
+                )
+                wait_until_stop(stop_event, args.quota_retry_delay)
                 continue
             print(f"streamList watcher stopped: {exc}", file=sys.stderr)
             stop_event.set()
@@ -471,24 +510,97 @@ def send_text_message_with_auth_retry(
     live_chat_id: str,
     message: str,
 ) -> tuple[dict[str, object], YouTubeClient]:
-    try:
-        return youtube.send_text_message(live_chat_id, message), youtube
-    except YouTubeApiError as exc:
-        if not is_auth_error(exc):
-            raise
+    quota_retry_delay, quota_max_retries = quota_retry_settings(args)
+    quota_retries = 0
+    auth_retried = False
 
-        print("Access token was rejected. Refreshing OAuth token and retrying once...")
-        refreshed_youtube = refresh_youtube(args)
-        return refreshed_youtube.send_text_message(live_chat_id, message), refreshed_youtube
+    while True:
+        try:
+            return youtube.send_text_message(live_chat_id, message), youtube
+        except YouTubeApiError as exc:
+            if is_auth_error(exc) and not auth_retried:
+                print("Access token was rejected. Refreshing OAuth token and retrying once...")
+                youtube = refresh_youtube(args)
+                auth_retried = True
+                continue
+
+            if is_youtube_quota_error(exc):
+                quota_retries += 1
+                if quota_max_retries and quota_retries > quota_max_retries:
+                    print(
+                        "YouTube API quota/resource retry limit reached. "
+                        f"Last error: {exc}",
+                        file=sys.stderr,
+                    )
+                    raise
+                print(
+                    "YouTube API quota/resource exhausted. "
+                    f"Waiting {quota_retry_delay:.1f}s before retry "
+                    f"{format_retry_count(quota_retries, quota_max_retries)}...",
+                    file=sys.stderr,
+                )
+                time.sleep(quota_retry_delay)
+                continue
+
+            raise
 
 
 def is_auth_error(exc: YouTubeApiError) -> bool:
     return exc.status == 401 or exc.reason == "authError"
 
 
+def is_youtube_quota_error(exc: YouTubeApiError) -> bool:
+    reason = exc.reason.lower()
+    message = exc.message.lower()
+    quota_reasons = {
+        "quotaexceeded",
+        "dailylimitexceeded",
+        "userratelimitexceeded",
+        "ratelimitexceeded",
+    }
+    return (
+        reason in quota_reasons
+        or "quotaexceeded" in reason
+        or "quota exceeded" in message
+        or "resource_exhausted" in message
+    )
+
+
 def is_stream_auth_error(exc: LiveCommentError) -> bool:
     message = str(exc)
     return "UNAUTHENTICATED" in message or "auth" in message.lower()
+
+
+def is_stream_quota_error(exc: LiveCommentError) -> bool:
+    if isinstance(exc, StreamListError) and exc.code == "RESOURCE_EXHAUSTED":
+        return True
+    message = str(exc).lower()
+    return "resource_exhausted" in message or "quotaexceeded" in message or "quota exceeded" in message
+
+
+def wait_until_stop(stop_event: threading.Event, seconds: float) -> None:
+    stop_event.wait(seconds)
+
+
+def validate_quota_retry_settings(args: argparse.Namespace) -> None:
+    quota_retry_delay, quota_max_retries = quota_retry_settings(args)
+    if quota_retry_delay < 1:
+        raise LiveCommentError("quota retry delay must be at least 1 second.")
+    if quota_max_retries < 0:
+        raise LiveCommentError("quota max retries cannot be negative.")
+
+
+def quota_retry_settings(args: argparse.Namespace) -> tuple[float, int]:
+    return (
+        float(getattr(args, "quota_retry_delay", DEFAULT_QUOTA_RETRY_DELAY_SECONDS)),
+        int(getattr(args, "quota_max_retries", DEFAULT_QUOTA_MAX_RETRIES)),
+    )
+
+
+def format_retry_count(retry_count: int, max_retries: int) -> str:
+    if max_retries == 0:
+        return str(retry_count)
+    return f"{retry_count}/{max_retries}"
 
 
 def resolve_target_chat_id(youtube: YouTubeClient, args: argparse.Namespace) -> str:

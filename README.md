@@ -587,6 +587,8 @@ python3 -m livecomment send --live-chat-id "CHAT_ID" --message "메시지"
 | `--max-length` | `200` | 로컬 메시지 길이 제한. `0`이면 비활성화 |
 | `--allow-repeat` | 꺼짐 | 같은 메시지 연속 전송 허용. 단건 모드에서는 큰 의미가 없습니다 |
 | `--dry-run` | 꺼짐 | 실제 전송 없이 대상과 메시지만 검증 |
+| `--quota-retry-delay` | `900` | `quotaExceeded` 또는 resource 계열 오류 후 재시도 전 대기 시간 |
+| `--quota-max-retries` | `0` | quota/resource 오류 재시도 최대 횟수. `0`이면 무제한 |
 | `--client-secrets` | `client_secret.json` | Google OAuth 클라이언트 JSON 파일 경로 |
 | `--token` | `.livecomment/token.json` | OAuth 토큰 저장 경로 |
 
@@ -616,6 +618,8 @@ python3 -m livecomment chat --live-chat-id "CHAT_ID"
 | `--allow-repeat` | 꺼짐 | 같은 메시지 연속 전송 허용 |
 | `--max-length` | `200` | 로컬 메시지 길이 제한. `0`이면 비활성화 |
 | `--dry-run` | 꺼짐 | 실제 전송 없이 준비 상태만 확인 |
+| `--quota-retry-delay` | `900` | `quotaExceeded` 또는 resource 계열 오류 후 재시도 전 대기 시간 |
+| `--quota-max-retries` | `0` | quota/resource 오류 재시도 최대 횟수. `0`이면 무제한 |
 | `--client-secrets` | `client_secret.json` | Google OAuth 클라이언트 JSON 파일 경로 |
 | `--token` | `.livecomment/token.json` | OAuth 토큰 저장 경로 |
 
@@ -669,6 +673,8 @@ python3 -m livecomment announce \
 | `--start-delay` | `0` | 첫 전송 전 대기 시간 |
 | `--max-length` | `200` | 로컬 메시지 길이 제한. `0`이면 비활성화 |
 | `--dry-run` | 꺼짐 | 실제 전송 없이 계획만 확인 |
+| `--quota-retry-delay` | `900` | `quotaExceeded` 또는 resource 계열 오류 후 재시도 전 대기 시간 |
+| `--quota-max-retries` | `0` | quota/resource 오류 재시도 최대 횟수. `0`이면 무제한 |
 | `--client-secrets` | `client_secret.json` | Google OAuth 클라이언트 JSON 파일 경로 |
 | `--token` | `.livecomment/token.json` | OAuth 토큰 저장 경로 |
 
@@ -703,6 +709,8 @@ messages.txt 현재 줄: 사랑해 ❤❤❤
 | `--count` | `9876543210` | 전송 횟수. 기본값과 최대값은 `MAX_ANNOUNCE_COUNT` |
 | `--start-delay` | `0` | 전송 가능 상태가 되기 전 대기 시간 |
 | `--stream-max-results` | `200` | `streamList` 응답당 최대 메시지 수. YouTube 허용 최소값은 200 |
+| `--quota-retry-delay` | `900` | `RESOURCE_EXHAUSTED`, `quotaExceeded` 또는 resource 계열 오류 후 재시도 전 대기 시간 |
+| `--quota-max-retries` | `0` | quota/resource 오류 재시도 최대 횟수. `0`이면 무제한 |
 | `--max-length` | `200` | 로컬 메시지 길이 제한. `ㅇㅇ업` 접두어까지 포함해서 검사 |
 | `--dry-run` | 꺼짐 | 실제 전송 없이 설정만 확인 |
 | `--client-secrets` | `client_secret.json` | Google OAuth 클라이언트 JSON 파일 경로 |
@@ -713,6 +721,15 @@ messages.txt 현재 줄: 사랑해 ❤❤❤
 ```bash
 python3 -m venv .venv
 .venv/bin/python -m pip install -e '.[stream]'
+```
+
+채팅 전송 API에서 `quotaExceeded`가 발생하거나, `streamList`에서 `RESOURCE_EXHAUSTED`가 발생하면 기본적으로 900초 기다린 뒤 재시도합니다. 더 길게 기다리려면:
+
+```bash
+python3 -m livecomment watch-up \
+  --video "VIDEO_URL_OR_ID" \
+  --message-file messages.txt \
+  --quota-retry-delay 1800
 ```
 
 ## 환경 변수
@@ -767,7 +784,7 @@ Google 계정 보안 페이지에서 앱 권한을 직접 철회할 수도 있�
 
 ## 테스트
 
-현재 테스트는 YouTube 영상 URL/ID 파싱, `announce`/`watch-up` 스케줄 제한, `ㅇㅇ업` 패턴 감지, 401 재시도 로직을 확인합니다.
+현재 테스트는 YouTube 영상 URL/ID 파싱, `announce`/`watch-up` 스케줄 제한, `ㅇㅇ업` 패턴 감지, 401 재시도, YouTube API와 streamList quota 재시도 로직을 확인합니다.
 
 ```bash
 cd /home/hjw/git/LiveComment
@@ -777,9 +794,9 @@ python3 -B -m unittest discover -s tests
 성공하면 다음과 비슷하게 나옵니다.
 
 ```text
-.........................
+...............................
 ----------------------------------------------------------------------
-Ran 26 tests in 0.009s
+Ran 31 tests in 0.011s
 
 OK
 ```
@@ -1020,6 +1037,7 @@ python3 -m livecomment chat --live-chat-id "위에서_확인한_CHAT_ID"
 - 처음에는 `resolve`로 대상 라이브 채팅 ID가 잘 나오는지 확인하세요.
 - 실제 전송 전에는 `send --dry-run`으로 한 번 확인하세요.
 - 반복 공지는 `announce --dry-run`으로 계획을 먼저 확인하세요.
+- 장시간 실행할 때는 `--quota-retry-delay`를 넉넉하게 잡아 quota/resource 오류 후 바로 재시도하지 않게 하세요.
 - 방송 채팅이 느린 모드라면 `--cooldown`을 방송 설정보다 넉넉하게 잡으세요.
 - 공지 반복은 `--interval 300` 이상처럼 충분히 드문 간격을 권장합니다.
 - 같은 메시지를 반복해서 보내면 YouTube가 제한할 수 있습니다.

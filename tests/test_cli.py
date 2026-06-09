@@ -10,12 +10,14 @@ from livecomment.cli import (
     build_parser,
     is_auth_error,
     is_stream_auth_error,
+    is_stream_quota_error,
+    is_youtube_quota_error,
     load_announce_messages,
     send_text_message_with_auth_retry,
     validate_announce_schedule,
 )
 from livecomment.errors import LiveCommentError, YouTubeApiError
-from livecomment.streaming import build_prefixed_message, extract_up_trigger
+from livecomment.streaming import StreamListError, build_prefixed_message, extract_up_trigger
 
 
 class FakeYouTubeClient:
@@ -114,6 +116,8 @@ class AnnounceScheduleTests(unittest.TestCase):
 
         self.assertEqual(args.message_file, Path("messages.txt"))
         self.assertEqual(args.interval, MIN_ANNOUNCE_INTERVAL_SECONDS)
+        self.assertEqual(args.quota_retry_delay, 900.0)
+        self.assertEqual(args.quota_max_retries, 0)
 
 
 class UpTriggerTests(unittest.TestCase):
@@ -144,6 +148,17 @@ class AuthRetryTests(unittest.TestCase):
     def test_detects_stream_auth_error(self):
         self.assertTrue(is_stream_auth_error(LiveCommentError("streamList failed: UNAUTHENTICATED")))
 
+    def test_detects_stream_quota_error(self):
+        self.assertTrue(is_stream_quota_error(StreamListError("RESOURCE_EXHAUSTED", "check quota")))
+
+    def test_detects_stream_quota_error_from_message(self):
+        self.assertTrue(is_stream_quota_error(LiveCommentError("quotaExceeded")))
+
+    def test_detects_youtube_quota_error(self):
+        self.assertTrue(
+            is_youtube_quota_error(YouTubeApiError(403, "quotaExceeded", "quota exceeded"))
+        )
+
     def test_refreshes_and_retries_once_on_auth_error(self):
         stale = FakeYouTubeClient([YouTubeApiError(401, "authError", "bad token")])
         refreshed = FakeYouTubeClient([{"id": "message-id"}])
@@ -173,6 +188,74 @@ class AuthRetryTests(unittest.TestCase):
                 send_text_message_with_auth_retry(object(), youtube, "CHAT_ID", "공지 메시지")
 
         refresh.assert_not_called()
+
+    def test_retries_youtube_quota_error_after_wait(self):
+        youtube = FakeYouTubeClient(
+            [
+                YouTubeApiError(403, "quotaExceeded", "quota exceeded"),
+                {"id": "message-id"},
+            ]
+        )
+        args = build_parser().parse_args(
+            [
+                "send",
+                "--live-chat-id",
+                "CHAT_ID",
+                "--message",
+                "공지 메시지",
+                "--quota-retry-delay",
+                "1",
+                "--quota-max-retries",
+                "2",
+            ]
+        )
+
+        with (
+            patch("livecomment.cli.time.sleep") as sleep,
+            patch("sys.stderr", new_callable=io.StringIO),
+        ):
+            response, returned_youtube = send_text_message_with_auth_retry(
+                args,
+                youtube,
+                "CHAT_ID",
+                "공지 메시지",
+            )
+
+        self.assertEqual(response, {"id": "message-id"})
+        self.assertIs(returned_youtube, youtube)
+        self.assertEqual(youtube.calls, [("CHAT_ID", "공지 메시지"), ("CHAT_ID", "공지 메시지")])
+        sleep.assert_called_once_with(1.0)
+
+    def test_stops_after_youtube_quota_retry_limit(self):
+        youtube = FakeYouTubeClient(
+            [
+                YouTubeApiError(403, "quotaExceeded", "quota exceeded"),
+                YouTubeApiError(403, "quotaExceeded", "quota exceeded"),
+            ]
+        )
+        args = build_parser().parse_args(
+            [
+                "send",
+                "--live-chat-id",
+                "CHAT_ID",
+                "--message",
+                "공지 메시지",
+                "--quota-retry-delay",
+                "1",
+                "--quota-max-retries",
+                "1",
+            ]
+        )
+
+        with (
+            patch("livecomment.cli.time.sleep") as sleep,
+            patch("sys.stderr", new_callable=io.StringIO),
+        ):
+            with self.assertRaises(YouTubeApiError):
+                send_text_message_with_auth_retry(args, youtube, "CHAT_ID", "공지 메시지")
+
+        self.assertEqual(youtube.calls, [("CHAT_ID", "공지 메시지"), ("CHAT_ID", "공지 메시지")])
+        sleep.assert_called_once_with(1.0)
 
 
 if __name__ == "__main__":

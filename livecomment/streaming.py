@@ -28,6 +28,13 @@ class StreamChatMessage:
     published_at: str | None = None
 
 
+class StreamListError(LiveCommentError):
+    def __init__(self, code: str, details: str) -> None:
+        self.code = code
+        self.details = details
+        super().__init__(f"streamList failed: {code}: {details}")
+
+
 class UpTriggerState:
     def __init__(self) -> None:
         self._lock = threading.Lock()
@@ -112,7 +119,7 @@ def stream_live_chat_messages(
                         if message:
                             yield message
             except grpc.RpcError as exc:
-                raise LiveCommentError(f"streamList failed: {exc.code().name}: {exc.details()}") from exc
+                raise StreamListError(exc.code().name, exc.details() or "") from exc
 
         if not next_page_token:
             return
