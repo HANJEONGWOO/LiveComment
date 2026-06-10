@@ -80,7 +80,7 @@ LiveComment가 하는 일은 다음과 같습니다.
 
 ```bash
 python3 -m venv .venv
-.venv/bin/python -m pip install -e '.[stream]'
+.venv/bin/python -m pip install -r requirement.txt
 ```
 
 `run.sh`는 기본적으로 현재 폴더의 `.venv/bin/python`을 사용합니다.
@@ -188,11 +188,11 @@ python3 -m livecomment --help
 
 ```bash
 python3 -m venv .venv
-.venv/bin/python -m pip install -e .
+.venv/bin/python -m pip install -r requirement.txt
 .venv/bin/livecomment --help
 ```
 
-단, `watch-up`을 쓰려면 gRPC 의존성을 설치해야 합니다. 일반 전송 기능만 쓴다면 `python3 -m livecomment ...` 방식이 가장 단순합니다.
+`requirement.txt`는 `watch-up`에 필요한 gRPC 의존성까지 함께 설치합니다. 일반 전송 기능만 쓴다면 별도 패키지 설치 없이 `python3 -m livecomment ...` 방식으로도 실행할 수 있습니다.
 
 ## 처음 인증하기
 
@@ -385,7 +385,7 @@ YouTube 자체의 속도 제한은 여전히 적용됩니다. 로컬 쿨다운�
 
 ```bash
 python3 -m venv .venv
-.venv/bin/python -m pip install -e '.[stream]'
+.venv/bin/python -m pip install -r requirement.txt
 ```
 
 가장 간단하게 실행하려면 `run.sh`를 사용할 수 있습니다. 실행하면 영상 URL만 물어보고, `messages.txt`에 적힌 각 줄을 순서대로 사용합니다.
@@ -720,7 +720,7 @@ messages.txt 현재 줄: 사랑해 ❤❤❤
 
 ```bash
 python3 -m venv .venv
-.venv/bin/python -m pip install -e '.[stream]'
+.venv/bin/python -m pip install -r requirement.txt
 ```
 
 채팅 전송 API에서 `quotaExceeded`가 발생하거나, `streamList`에서 `RESOURCE_EXHAUSTED`가 발생하면 기본적으로 900초 기다린 뒤 재시도합니다. 더 길게 기다리려면:
