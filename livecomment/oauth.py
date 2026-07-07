@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 import secrets
+import subprocess
 import time
 import webbrowser
 from dataclasses import dataclass
@@ -115,10 +116,8 @@ def authorize(
 
     print("Open this URL in your browser to authorize LiveComment:")
     print(auth_url)
-    try:
-        webbrowser.open(auth_url)
-    except webbrowser.Error:
-        pass
+    if not _open_browser(auth_url):
+        print("Browser did not open automatically. Keep this command running and open the URL above manually.")
 
     server.timeout = timeout_seconds
     server.handle_request()
@@ -186,7 +185,15 @@ def refresh_access_token(
     if client.client_secret:
         form["client_secret"] = client.client_secret
 
-    refreshed = post_form(client.token_uri, form)
+    try:
+        refreshed = post_form(client.token_uri, form)
+    except OAuthError as exc:
+        if _is_invalid_grant(exc):
+            print("Stored OAuth refresh token was rejected. Starting authorization again...")
+            token = authorize(client, token_store, scope=scope, force=True)
+            return str(token["access_token"])
+        raise
+
     refreshed = _with_expiry(refreshed)
     refreshed["refresh_token"] = refresh_token
     refreshed["scope"] = token.get("scope", scope)
@@ -213,6 +220,45 @@ def _is_valid(token: dict[str, Any]) -> bool:
     access_token = token.get("access_token")
     expires_at = int(token.get("expires_at", 0))
     return bool(access_token) and expires_at - 60 > int(time.time())
+
+
+def _is_invalid_grant(exc: OAuthError) -> bool:
+    return exc.error == "invalid_grant" or "invalid_grant" in str(exc)
+
+
+def _open_browser(url: str) -> bool:
+    if _is_wsl():
+        try:
+            completed = subprocess.run(
+                ["cmd.exe", "/c", "start", "", url],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=False,
+            )
+        except OSError:
+            return False
+        return completed.returncode == 0
+
+    if not (
+        os.environ.get("DISPLAY")
+        or os.environ.get("WAYLAND_DISPLAY")
+        or os.environ.get("BROWSER")
+    ):
+        return False
+
+    try:
+        return bool(webbrowser.open(url))
+    except webbrowser.Error:
+        return False
+
+
+def _is_wsl() -> bool:
+    if os.environ.get("WSL_INTEROP") or os.environ.get("WSL_DISTRO_NAME"):
+        return True
+    try:
+        return "microsoft" in Path("/proc/version").read_text(encoding="utf-8").lower()
+    except OSError:
+        return False
 
 
 class _CallbackServer(HTTPServer):

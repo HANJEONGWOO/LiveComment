@@ -24,7 +24,11 @@ def post_form(url: str, data: dict[str, str], timeout: int = 30) -> dict[str, An
         body = _read_error_body(exc)
         error = body.get("error", "unknown_error")
         description = body.get("error_description", body.get("message", "No detail"))
-        raise OAuthError(f"OAuth request failed: {error}: {description}") from exc
+        raise OAuthError(
+            f"OAuth request failed: {error}: {description}",
+            error=str(error),
+            description=str(description),
+        ) from exc
     except URLError as exc:
         raise OAuthError(f"OAuth request failed: {exc.reason}") from exc
 

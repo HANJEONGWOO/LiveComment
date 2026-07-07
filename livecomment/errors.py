@@ -5,6 +5,17 @@ class LiveCommentError(Exception):
 class OAuthError(LiveCommentError):
     """Raised when OAuth authorization or token refresh fails."""
 
+    def __init__(
+        self,
+        message: str,
+        *,
+        error: str | None = None,
+        description: str | None = None,
+    ) -> None:
+        self.error = error
+        self.description = description
+        super().__init__(message)
+
 
 class YouTubeApiError(LiveCommentError):
     """Raised when the YouTube API returns an error."""
