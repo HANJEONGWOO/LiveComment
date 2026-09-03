@@ -101,18 +101,13 @@ def authorize(
     server = _CallbackServer(("127.0.0.1", 0), _OAuthCallbackHandler, state)
     redirect_uri = f"http://127.0.0.1:{server.server_port}/callback"
 
-    params = {
-        "client_id": client.client_id,
-        "redirect_uri": redirect_uri,
-        "response_type": "code",
-        "scope": scope,
-        "state": state,
-        "access_type": "offline",
-        "prompt": "consent",
-        "code_challenge": challenge,
-        "code_challenge_method": "S256",
-    }
-    auth_url = f"{client.auth_uri}?{urlencode(params)}"
+    auth_url = _build_authorization_url(
+        client,
+        redirect_uri=redirect_uri,
+        scope=scope,
+        state=state,
+        challenge=challenge,
+    )
 
     print("Open this URL in your browser to authorize LiveComment:")
     print(auth_url)
@@ -205,6 +200,28 @@ def _new_code_verifier() -> str:
     return secrets.token_urlsafe(96)[:128]
 
 
+def _build_authorization_url(
+    client: OAuthClient,
+    *,
+    redirect_uri: str,
+    scope: str,
+    state: str,
+    challenge: str,
+) -> str:
+    params = {
+        "client_id": client.client_id,
+        "redirect_uri": redirect_uri,
+        "response_type": "code",
+        "scope": scope,
+        "state": state,
+        "access_type": "offline",
+        "prompt": "consent",
+        "code_challenge": challenge,
+        "code_challenge_method": "S256",
+    }
+    return f"{client.auth_uri}?{urlencode(params)}"
+
+
 def _code_challenge(verifier: str) -> str:
     digest = hashlib.sha256(verifier.encode("ascii")).digest()
     return base64.urlsafe_b64encode(digest).decode("ascii").rstrip("=")
@@ -230,7 +247,7 @@ def _open_browser(url: str) -> bool:
     if _is_wsl():
         try:
             completed = subprocess.run(
-                ["cmd.exe", "/c", "start", "", url],
+                ["explorer.exe", url],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
                 check=False,

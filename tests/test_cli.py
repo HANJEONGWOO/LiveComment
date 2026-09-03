@@ -5,19 +5,20 @@ import unittest
 from unittest.mock import patch
 
 from livecomment.cli import (
+    DEFAULT_ANNOUNCE_PREFIX,
     MAX_ANNOUNCE_COUNT,
     MIN_ANNOUNCE_INTERVAL_SECONDS,
+    authed_youtube,
     build_parser,
+    cmd_announce,
     is_auth_error,
-    is_stream_auth_error,
-    is_stream_quota_error,
     is_youtube_quota_error,
     load_announce_messages,
+    prefix_announce_messages,
     send_text_message_with_auth_retry,
     validate_announce_schedule,
 )
 from livecomment.errors import LiveCommentError, YouTubeApiError
-from livecomment.streaming import StreamListError, build_prefixed_message, extract_up_trigger
 
 
 class FakeYouTubeClient:
@@ -49,6 +50,7 @@ class AnnounceScheduleTests(unittest.TestCase):
         self.assertEqual(args.interval, MIN_ANNOUNCE_INTERVAL_SECONDS)
         self.assertEqual(args.count, MAX_ANNOUNCE_COUNT)
         self.assertEqual(args.message_file, Path("messages.txt"))
+        self.assertEqual(args.prefix, DEFAULT_ANNOUNCE_PREFIX)
 
     def test_loads_single_inline_announcement(self):
         self.assertEqual(
@@ -104,55 +106,81 @@ class AnnounceScheduleTests(unittest.TestCase):
         with self.assertRaises(LiveCommentError):
             validate_announce_schedule(120.0, 3, -1.0)
 
-    def test_parser_defaults_watch_up_to_message_file(self):
+    def test_prefixes_every_announcement(self):
+        self.assertEqual(
+            prefix_announce_messages(
+                ["첫 번째 문장", "두 번째 문장"],
+                prefix="후원자업",
+                max_length=200,
+            ),
+            ["후원자업 첫 번째 문장", "후원자업 두 번째 문장"],
+        )
+
+    def test_empty_prefix_keeps_messages_unchanged(self):
+        messages = ["첫 번째 문장", "두 번째 문장"]
+
+        self.assertIs(
+            prefix_announce_messages(messages, prefix="  ", max_length=200),
+            messages,
+        )
+
+    def test_rejects_too_long_prefixed_announcement(self):
+        with self.assertRaises(LiveCommentError):
+            prefix_announce_messages(["사랑해"], prefix="후원자업", max_length=5)
+
+    def test_announce_sends_every_message_with_default_prefix(self):
+        youtube = FakeYouTubeClient([{"id": "first"}, {"id": "second"}])
         args = build_parser().parse_args(
             [
-                "watch-up",
+                "announce",
                 "--live-chat-id",
                 "CHAT_ID",
-                "--dry-run",
+                "--message-file",
+                "messages.txt",
+                "--count",
+                "2",
             ]
         )
 
-        self.assertEqual(args.message_file, Path("messages.txt"))
-        self.assertEqual(args.interval, MIN_ANNOUNCE_INTERVAL_SECONDS)
-        self.assertEqual(args.quota_retry_delay, 900.0)
-        self.assertEqual(args.quota_max_retries, 0)
+        with (
+            patch("livecomment.cli.load_announce_messages", return_value=["첫 문장", "둘째 문장"]),
+            patch("livecomment.cli.authed_youtube", return_value=youtube),
+            patch("livecomment.cli.resolve_target_chat_id", return_value="CHAT_ID"),
+            patch("livecomment.cli.time.sleep"),
+            patch("sys.stdout", new_callable=io.StringIO),
+        ):
+            result = cmd_announce(args)
 
-
-class UpTriggerTests(unittest.TestCase):
-    def test_extracts_up_trigger(self):
-        self.assertEqual(extract_up_trigger("모카업 ❤❤❤"), "모카업")
-
-    def test_extracts_last_up_trigger(self):
-        self.assertEqual(extract_up_trigger("초코업 모카업!!"), "모카업")
-
-    def test_returns_none_without_up_trigger(self):
-        self.assertIsNone(extract_up_trigger("그냥 채팅"))
-
-    def test_builds_prefixed_message(self):
+        self.assertEqual(result, 0)
         self.assertEqual(
-            build_prefixed_message("모카업", "사랑해 ❤❤❤", max_length=200),
-            "모카업 사랑해 ❤❤❤",
+            youtube.calls,
+            [("CHAT_ID", "후원자업 첫 문장"), ("CHAT_ID", "후원자업 둘째 문장")],
         )
-
-    def test_rejects_too_long_prefixed_message(self):
-        with self.assertRaises(LiveCommentError):
-            build_prefixed_message("모카업", "사랑해", max_length=5)
 
 
 class AuthRetryTests(unittest.TestCase):
+    def test_builds_youtube_client_from_access_token(self):
+        args = build_parser().parse_args(
+            [
+                "send",
+                "--live-chat-id",
+                "CHAT_ID",
+                "--message",
+                "공지 메시지",
+            ]
+        )
+
+        with (
+            patch("livecomment.cli.load_oauth_client", return_value=object()),
+            patch("livecomment.cli.get_access_token", return_value="access-token") as get_token,
+        ):
+            youtube = authed_youtube(args)
+
+        self.assertEqual(youtube.access_token, "access-token")
+        get_token.assert_called_once()
+
     def test_detects_auth_error(self):
         self.assertTrue(is_auth_error(YouTubeApiError(401, "authError", "bad token")))
-
-    def test_detects_stream_auth_error(self):
-        self.assertTrue(is_stream_auth_error(LiveCommentError("streamList failed: UNAUTHENTICATED")))
-
-    def test_detects_stream_quota_error(self):
-        self.assertTrue(is_stream_quota_error(StreamListError("RESOURCE_EXHAUSTED", "check quota")))
-
-    def test_detects_stream_quota_error_from_message(self):
-        self.assertTrue(is_stream_quota_error(LiveCommentError("quotaExceeded")))
 
     def test_detects_youtube_quota_error(self):
         self.assertTrue(

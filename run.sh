@@ -7,9 +7,9 @@ python_bin="${LIVECOMMENT_PYTHON:-.venv/bin/python}"
 
 if [[ ! -x "$python_bin" ]]; then
   echo "$python_bin 실행 파일을 찾을 수 없습니다." >&2
-  echo "먼저 현재 폴더에서 가상환경을 만들고 stream 의존성을 설치해주세요." >&2
+  echo "먼저 현재 폴더에서 가상환경을 만들고 필요한 패키지를 설치해주세요." >&2
   echo "예: python3 -m venv .venv" >&2
-  echo "예: .venv/bin/python -m pip install -e '.[stream]'" >&2
+  echo "예: .venv/bin/python -m pip install -r requirement.txt" >&2
   exit 1
 fi
 
@@ -36,7 +36,8 @@ if [[ -z "${video_url//[[:space:]]/}" ]]; then
   exit 1
 fi
 
-exec "$python_bin" -m livecomment watch-up \
+exec "$python_bin" -m livecomment announce \
   --client-secrets client_secret.json \
   --video "$video_url" \
-  --message-file "$message_file"
+  --message-file "$message_file" \
+  --prefix "후원자업"

@@ -1,5 +1,6 @@
 # Install from the project root with:
 # python3 -m pip install -r requirement.txt
 #
-# This installs LiveComment in editable mode and includes streamList support.
--e .[stream]
+# LiveComment uses only the Python standard library at runtime.
+# Editable installation also registers the `livecomment` command.
+-e .

@@ -6,18 +6,8 @@ readme = "README.md"
 requires-python = ">=3.11"
 dependencies = []
 
-[project.optional-dependencies]
-stream = [
-  "grpcio>=1.62",
-  "grpcio-tools>=1.62",
-  "protobuf>=4.25",
-]
-
 [project.scripts]
 livecomment = "livecomment.cli:main"
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
-
-[tool.setuptools.package-data]
-livecomment = ["grpc/*.proto"]

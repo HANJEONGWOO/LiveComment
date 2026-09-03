@@ -31,8 +31,7 @@ LiveComment가 하는 일은 다음과 같습니다.
 - Google OAuth 인증을 통해 내 YouTube 계정으로 댓글을 보낼 권한을 얻습니다.
 - `send` 명령으로 댓글 하나를 즉시 보냅니다.
 - `chat` 명령으로 터미널에서 한 줄씩 입력하며 댓글을 보냅니다.
-- `announce` 명령으로 정해진 간격과 횟수만큼 방송 공지를 반복 전송합니다.
-- `watch-up` 명령으로 `streamList`를 통해 채팅을 읽고, 다른 사람이 말한 `ㅇㅇ업` 문구에 맞춰 응답을 보냅니다.
+- `announce` 명령으로 각 문장 앞에 `후원자업`을 붙여 정해진 간격과 횟수만큼 반복 전송합니다.
 - 실수로 같은 댓글을 연속 전송하는 것을 기본적으로 막습니다.
 - 대화형 모드에서 기본 쿨다운을 적용해 너무 빠른 연속 전송을 줄입니다.
 - 토큰을 로컬 파일에 저장해서 다음 실행부터는 매번 로그인하지 않아도 됩니다.
@@ -42,6 +41,7 @@ LiveComment가 하는 일은 다음과 같습니다.
 - 무기한 자동 댓글 반복 전송을 하지 않습니다.
 - YouTube 허용량을 탐색하거나 최대 속도에 맞춰 전송하지 않습니다.
 - 여러 계정으로 돌아가며 댓글을 보내지 않습니다.
+- 다른 사람의 라이브 채팅을 읽거나 분석하지 않습니다.
 - YouTube의 속도 제한이나 채팅 제한을 우회하지 않습니다.
 - 채팅 금지, 슬로우 모드, 구독자 전용 채팅, 회원 전용 채팅 같은 방송 설정을 우회하지 않습니다.
 - 라이브 영상 자체를 송출하거나 관리하지 않습니다. 이 도구는 "채팅 메시지 전송"만 다룹니다.
@@ -56,9 +56,7 @@ LiveComment가 하는 일은 다음과 같습니다.
 4. 사용자가 메시지를 입력합니다.
 5. 프로그램이 `liveChatMessages.insert` API를 호출해 `textMessageEvent`를 보냅니다.
 
-`announce` 명령은 같은 API를 사용하지만, 사용자가 지정한 `--interval` 간격과 `--count` 횟수만큼만 전송합니다. `--interval`을 생략하면 `MIN_ANNOUNCE_INTERVAL_SECONDS` 값이, `--count`를 생략하면 `MAX_ANNOUNCE_COUNT` 값이 자동으로 사용됩니다. 이것은 방송 공지처럼 합리적인 반복 메시지를 보내기 위한 기능이고, 속도 제한에 가깝게 밀어붙이는 기능은 아닙니다.
-
-`watch-up` 명령은 `liveChatMessages.streamList`로 채팅을 읽습니다. 다른 사람이 `모카업`처럼 `업`으로 끝나는 문구를 말하면, 프로그램은 그 문구를 기억해두고 현재 전송 간격마다 `모카업 + messages.txt의 다음 줄` 형태로 보냅니다.
+`announce` 명령은 같은 API를 사용하지만, 사용자가 지정한 `--interval` 간격과 `--count` 횟수만큼만 전송합니다. `--interval`을 생략하면 `MIN_ANNOUNCE_INTERVAL_SECONDS` 값이, `--count`를 생략하면 `MAX_ANNOUNCE_COUNT` 값이 자동으로 사용됩니다. 각 문장 앞에는 기본적으로 `후원자업`이 붙습니다. 다른 사람의 채팅은 읽지 않습니다.
 
 즉, 실제 댓글 전송은 YouTube 웹페이지를 조작하는 방식이 아니라 공식 YouTube Data API를 사용하는 방식입니다. 그래서 브라우저 자동화보다 안정적이고, 계정 권한도 Google OAuth를 통해 명시적으로 승인합니다.
 
@@ -76,7 +74,7 @@ LiveComment가 하는 일은 다음과 같습니다.
 - Desktop app 유형의 OAuth 클라이언트 JSON 파일
 - 현재 라이브 중이고 채팅이 켜져 있는 YouTube 영상
 
-기본 전송 기능은 외부 Python 패키지 없이 동작합니다. 다만 `streamList`를 쓰는 `watch-up` 기능은 gRPC 패키지가 필요합니다.
+LiveComment는 외부 런타임 패키지 없이 Python 표준 라이브러리만으로 동작합니다. 아래 명령은 가상환경을 만들고 `livecomment` 명령을 등록합니다.
 
 ```bash
 python3 -m venv .venv
@@ -192,7 +190,7 @@ python3 -m venv .venv
 .venv/bin/livecomment --help
 ```
 
-`requirement.txt`는 `watch-up`에 필요한 gRPC 의존성까지 함께 설치합니다. 일반 전송 기능만 쓴다면 별도 패키지 설치 없이 `python3 -m livecomment ...` 방식으로도 실행할 수 있습니다.
+`requirement.txt`로 프로젝트를 editable 모드로 설치합니다. 별도 패키지 설치 없이 `python3 -m livecomment ...` 방식으로도 실행할 수 있습니다.
 
 ## 처음 인증하기
 
@@ -255,7 +253,6 @@ python3 -m livecomment resolve --help
 python3 -m livecomment send --help
 python3 -m livecomment chat --help
 python3 -m livecomment announce --help
-python3 -m livecomment watch-up --help
 ```
 
 ### 라이브 채팅 ID 확인
@@ -379,16 +376,9 @@ python3 -m livecomment chat \
 
 YouTube 자체의 속도 제한은 여전히 적용됩니다. 로컬 쿨다운을 꺼도 YouTube가 메시지를 거절할 수 있습니다.
 
-### 채팅의 `ㅇㅇ업`에 맞춰 응답 보내기
+### `후원자업`을 붙여 반복 전송하기
 
-다른 사람이 `모카업`, `초코업`처럼 `업`으로 끝나는 문구를 말하면, 그 문구를 붙여서 응답하려면 `watch-up`을 사용합니다. 이 기능은 `streamList`를 사용하므로 gRPC 의존성이 필요합니다.
-
-```bash
-python3 -m venv .venv
-.venv/bin/python -m pip install -r requirement.txt
-```
-
-가장 간단하게 실행하려면 `run.sh`를 사용할 수 있습니다. 실행하면 영상 URL만 물어보고, `messages.txt`에 적힌 각 줄을 순서대로 사용합니다.
+가장 간단하게 실행하려면 `run.sh`를 사용합니다. 실행하면 영상 URL만 물어보고, `messages.txt`에 적힌 각 줄 앞에 `후원자업`을 붙여 순서대로 전송합니다. 다른 사람의 채팅을 읽는 API는 호출하지 않습니다.
 
 처음에는 예시 파일을 복사해서 메시지 파일을 만듭니다.
 
@@ -417,24 +407,18 @@ video url 입력해주세요.
 방송 관련 공지는 고정 댓글도 확인해주세요.
 ```
 
-예를 들어 다른 사람이 채팅에 이렇게 말하면:
+`messages.txt`의 첫 줄이 `사랑해 ❤❤❤`이라면 다음처럼 보냅니다.
 
 ```text
-모카업
+후원자업 사랑해 ❤❤❤
 ```
 
-`messages.txt`의 첫 줄이 `사랑해 ❤❤❤`일 때 프로그램은 현재 인터벌에 맞춰 다음처럼 보냅니다.
-
-```text
-모카업 사랑해 ❤❤❤
-```
-
-다음 전송 때는 `messages.txt`의 다음 줄을 사용합니다. 채팅에서 새로운 `ㅇㅇ업` 문구가 감지되면 이후 전송부터 그 최신 문구를 사용합니다.
+다음 전송 때는 `messages.txt`의 다음 줄을 사용합니다.
 
 직접 실행:
 
 ```bash
-python3 -m livecomment watch-up \
+python3 -m livecomment announce \
   --video "https://www.youtube.com/watch?v=VIDEO_ID" \
   --message-file messages.txt
 ```
@@ -442,7 +426,7 @@ python3 -m livecomment watch-up \
 전송 없이 설정만 확인하려면:
 
 ```bash
-python3 -m livecomment watch-up \
+python3 -m livecomment announce \
   --video "https://www.youtube.com/watch?v=VIDEO_ID" \
   --message-file messages.txt \
   --dry-run
@@ -450,7 +434,7 @@ python3 -m livecomment watch-up \
 
 ### 정해진 간격으로 공지 보내기
 
-채팅 내용을 읽지 않고 같은 안내 문구를 방송 중 몇 번 반복해서 보내야 한다면 `announce`를 사용합니다.
+채팅 내용을 읽지 않고 안내 문구를 방송 중 반복해서 보내려면 `announce`를 사용합니다. 각 문장 앞에는 기본적으로 `후원자업`이 붙습니다.
 
 간격과 횟수를 생략하면 코드에 정의된 기본값이 사용됩니다. 문구 파일을 직접 지정하려면 `--message-file`을 사용합니다.
 
@@ -466,6 +450,7 @@ python3 -m livecomment announce \
 | --- | --- |
 | `--interval` 기본값 | `MIN_ANNOUNCE_INTERVAL_SECONDS`, 현재 120초 |
 | `--count` 기본값 | `MAX_ANNOUNCE_COUNT`, 현재 9876543210회 |
+| `--prefix` 기본값 | `후원자업` |
 
 직접 간격과 횟수를 지정할 수도 있습니다.
 
@@ -634,7 +619,7 @@ python3 -m livecomment chat --live-chat-id "CHAT_ID"
 
 ### `announce`
 
-정해진 간격과 횟수만큼 공지 메시지를 보냅니다. `--message-file`을 사용하면 파일 안의 여러 문구를 순서대로 순환 전송합니다.
+정해진 간격과 횟수만큼 공지 메시지를 보냅니다. `--message-file`을 사용하면 파일 안의 여러 문구를 순서대로 순환 전송하며, 각 문장 앞에는 기본적으로 `후원자업`이 붙습니다.
 
 ```bash
 python3 -m livecomment announce \
@@ -671,6 +656,7 @@ python3 -m livecomment announce \
 | `--interval` | `120` | 전송 사이 간격. 기본값과 최소값은 `MIN_ANNOUNCE_INTERVAL_SECONDS` |
 | `--count` | `9876543210` | 전송 횟수. 기본값과 최대값은 `MAX_ANNOUNCE_COUNT` |
 | `--start-delay` | `0` | 첫 전송 전 대기 시간 |
+| `--prefix` | `후원자업` | 모든 공지 문장 앞에 붙일 고정 문구. 빈 문자열을 지정하면 접두어를 붙이지 않음 |
 | `--max-length` | `200` | 로컬 메시지 길이 제한. `0`이면 비활성화 |
 | `--dry-run` | 꺼짐 | 실제 전송 없이 계획만 확인 |
 | `--quota-retry-delay` | `900` | `quotaExceeded` 또는 resource 계열 오류 후 재시도 전 대기 시간 |
@@ -679,58 +665,6 @@ python3 -m livecomment announce \
 | `--token` | `.livecomment/token.json` | OAuth 토큰 저장 경로 |
 
 `announce`는 무기한 실행되지 않습니다. 전송 횟수를 생략하면 `MAX_ANNOUNCE_COUNT`가 사용되며, 지정되거나 기본 적용된 횟수를 모두 보내면 종료됩니다. 중간에 멈추려면 `Ctrl+C`를 누르면 됩니다.
-
-### `watch-up`
-
-`streamList`로 채팅을 읽고, 다른 사람이 말한 `ㅇㅇ업` 문구를 감지해 응답을 보냅니다.
-
-```bash
-python3 -m livecomment watch-up \
-  --video "VIDEO_URL_OR_ID" \
-  --message-file messages.txt
-```
-
-동작:
-
-```text
-다른 사람 채팅: 모카업
-messages.txt 현재 줄: 사랑해 ❤❤❤
-내가 보내는 메시지: 모카업 사랑해 ❤❤❤
-```
-
-주요 옵션:
-
-| 옵션 | 기본값 | 설명 |
-| --- | --- | --- |
-| `--video` | `--live-chat-id`와 둘 중 하나 필수 | YouTube 라이브 영상 URL 또는 영상 ID |
-| `--live-chat-id` | `--video`와 둘 중 하나 필수 | 이미 알고 있는 라이브 채팅 ID |
-| `--message-file` | `messages.txt` | 한 줄에 하나씩 적힌 응답 뒷부분 파일 |
-| `--interval` | `120` | 응답 전송 사이 간격. 기본값과 최소값은 `MIN_ANNOUNCE_INTERVAL_SECONDS` |
-| `--count` | `9876543210` | 전송 횟수. 기본값과 최대값은 `MAX_ANNOUNCE_COUNT` |
-| `--start-delay` | `0` | 전송 가능 상태가 되기 전 대기 시간 |
-| `--stream-max-results` | `200` | `streamList` 응답당 최대 메시지 수. YouTube 허용 최소값은 200 |
-| `--quota-retry-delay` | `900` | `RESOURCE_EXHAUSTED`, `quotaExceeded` 또는 resource 계열 오류 후 재시도 전 대기 시간 |
-| `--quota-max-retries` | `0` | quota/resource 오류 재시도 최대 횟수. `0`이면 무제한 |
-| `--max-length` | `200` | 로컬 메시지 길이 제한. `ㅇㅇ업` 접두어까지 포함해서 검사 |
-| `--dry-run` | 꺼짐 | 실제 전송 없이 설정만 확인 |
-| `--client-secrets` | `client_secret.json` | Google OAuth 클라이언트 JSON 파일 경로 |
-| `--token` | `.livecomment/token.json` | OAuth 토큰 저장 경로 |
-
-`watch-up`은 `streamList`를 사용하므로 아래 의존성이 필요합니다.
-
-```bash
-python3 -m venv .venv
-.venv/bin/python -m pip install -r requirement.txt
-```
-
-채팅 전송 API에서 `quotaExceeded`가 발생하거나, `streamList`에서 `RESOURCE_EXHAUSTED`가 발생하면 기본적으로 900초 기다린 뒤 재시도합니다. 더 길게 기다리려면:
-
-```bash
-python3 -m livecomment watch-up \
-  --video "VIDEO_URL_OR_ID" \
-  --message-file messages.txt \
-  --quota-retry-delay 1800
-```
 
 ## 환경 변수
 
@@ -784,7 +718,7 @@ Google 계정 보안 페이지에서 앱 권한을 직접 철회할 수도 있�
 
 ## 테스트
 
-현재 테스트는 YouTube 영상 URL/ID 파싱, `announce`/`watch-up` 스케줄 제한, `ㅇㅇ업` 패턴 감지, 401 재시도, YouTube API와 streamList quota 재시도 로직을 확인합니다.
+현재 테스트는 YouTube 영상 URL/ID 파싱, `announce` 스케줄 제한, `후원자업` 접두어 처리, 401 재시도, YouTube API quota 재시도 로직을 확인합니다.
 
 ```bash
 cd /home/hjw/git/LiveComment
@@ -794,9 +728,9 @@ python3 -B -m unittest discover -s tests
 성공하면 다음과 비슷하게 나옵니다.
 
 ```text
-...............................
+................................
 ----------------------------------------------------------------------
-Ran 31 tests in 0.011s
+Ran 32 tests in 0.014s
 
 OK
 ```
@@ -808,7 +742,6 @@ python3 -B -m livecomment --help
 python3 -B -m livecomment send --help
 python3 -B -m livecomment chat --help
 python3 -B -m livecomment announce --help
-python3 -B -m livecomment watch-up --help
 ```
 
 `-B` 옵션은 Python이 `__pycache__` 파일을 만들지 않도록 하는 옵션입니다. 테스트에는 필수는 아니지만 작업 폴더를 깔끔하게 유지하는 데 좋습니다.
@@ -844,7 +777,7 @@ mv /정확한/경로/client_secret.json /home/hjw/git/LiveComment/client_secret.
 
 ### 브라우저가 자동으로 열리지 않음
 
-프로그램은 `webbrowser.open()`으로 브라우저를 열려고 시도합니다. 서버 환경, WSL, 원격 SSH 환경에서는 자동으로 안 열릴 수 있습니다.
+프로그램은 일반 Linux 환경에서는 `webbrowser.open()`을 사용하고, WSL에서는 `explorer.exe`에 URL을 직접 전달해 브라우저를 열려고 시도합니다. 서버 또는 원격 SSH 환경에서는 자동으로 안 열릴 수 있습니다.
 
 해결:
 
@@ -853,6 +786,16 @@ mv /정확한/경로/client_secret.json /home/hjw/git/LiveComment/client_secret.
 - 인증을 완료합니다.
 
 로컬 콜백 주소가 `127.0.0.1`이므로, 프로그램이 실행 중인 같은 머신의 브라우저에서 여는 것이 가장 안정적입니다.
+
+### `Required parameter is missing: response_type`
+
+이전 버전에서 WSL의 `cmd.exe`가 OAuth URL의 `&` 문자를 명령 구분자로 해석해 URL 뒷부분을 잘랐을 때 발생할 수 있습니다. 실행 중인 프로그램을 `Ctrl+C`로 종료한 뒤 수정된 버전으로 다시 실행합니다.
+
+```bash
+./run.sh
+```
+
+새 버전은 WSL에서 `cmd.exe`를 거치지 않으므로 `response_type=code`를 포함한 OAuth URL 전체가 브라우저에 전달됩니다.
 
 ### `Timed out waiting for OAuth callback`
 
@@ -1051,9 +994,6 @@ python3 -m livecomment chat --live-chat-id "위에서_확인한_CHAT_ID"
 - YouTube Live Streaming API `liveChatMessages.insert`  
   https://developers.google.com/youtube/v3/live/docs/liveChatMessages/insert
 
-- YouTube Live Streaming API `liveChatMessages.streamList`  
-  https://developers.google.com/youtube/v3/live/docs/liveChatMessages/streamList
-
 - YouTube Streaming Live Chat guide  
   https://developers.google.com/youtube/v3/live/streaming-live-chat
 
@@ -1068,17 +1008,16 @@ python3 -m livecomment chat --live-chat-id "위에서_확인한_CHAT_ID"
 - `videos.list`
 - `liveStreamingDetails.activeLiveChatId`
 - `liveChatMessages.insert`
-- `liveChatMessages.streamList`
 - `snippet.type = textMessageEvent`
 - `snippet.textMessageDetails.messageText`
 
 ## 현재 한계
 
 - GUI는 없습니다. 터미널 CLI만 제공합니다.
-- 라이브 채팅 읽기는 `watch-up`의 `streamList` 기반 패턴 감지 용도로만 제공합니다.
+- 다른 사람의 라이브 채팅을 읽거나 반응하는 기능은 제공하지 않습니다.
 - `announce`는 제한된 반복 공지만 지원합니다. 무기한 반복이나 최대 속도 전송은 지원하지 않습니다.
 - 정교한 예약 전송 기능은 없습니다. 첫 전송 전 대기 시간은 `--start-delay`로만 지정할 수 있습니다.
 - YouTube가 거절한 메시지를 우회해서 보내는 기능은 없습니다.
 - OAuth 앱 검증이나 Google Cloud 프로젝트 생성 자체를 자동화하지 않습니다.
 
-필요하다면 다음 단계로는 라이브 채팅 읽기, 간단한 데스크톱 UI, 자주 쓰는 문구 목록, 전송 전 확인 프롬프트 같은 기능을 붙일 수 있습니다.
+필요하다면 다음 단계로는 간단한 데스크톱 UI, 자주 쓰는 문구 목록, 전송 전 확인 프롬프트 같은 기능을 붙일 수 있습니다.

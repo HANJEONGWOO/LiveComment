@@ -3,9 +3,16 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import patch
+from urllib.parse import parse_qs, urlparse
 
 from livecomment.errors import OAuthError
-from livecomment.oauth import OAuthClient, TokenStore, _open_browser, refresh_access_token
+from livecomment.oauth import (
+    OAuthClient,
+    TokenStore,
+    _build_authorization_url,
+    _open_browser,
+    refresh_access_token,
+)
 
 
 class RefreshAccessTokenTests(unittest.TestCase):
@@ -80,17 +87,38 @@ class RefreshAccessTokenTests(unittest.TestCase):
 
 
 class OpenBrowserTests(unittest.TestCase):
-    def test_opens_windows_browser_on_wsl(self):
+    def test_authorization_url_contains_required_response_type(self):
+        client = OAuthClient(
+            client_id="client-id",
+            client_secret="client-secret",
+            auth_uri="https://example.test/auth",
+            token_uri="https://example.test/token",
+        )
+
+        url = _build_authorization_url(
+            client,
+            redirect_uri="http://127.0.0.1:12345/callback",
+            scope="scope-a",
+            state="state-a",
+            challenge="challenge-a",
+        )
+        params = parse_qs(urlparse(url).query)
+
+        self.assertEqual(params["response_type"], ["code"])
+        self.assertEqual(params["client_id"], ["client-id"])
+
+    def test_opens_windows_browser_on_wsl_without_shell_parsing(self):
+        url = "https://example.test/auth?client_id=test&response_type=code"
         with (
             patch("livecomment.oauth._is_wsl", return_value=True),
             patch("livecomment.oauth.subprocess.run") as run,
         ):
             run.return_value.returncode = 0
 
-            self.assertTrue(_open_browser("https://example.test/auth"))
+            self.assertTrue(_open_browser(url))
 
         run.assert_called_once()
-        self.assertEqual(run.call_args.args[0][:4], ["cmd.exe", "/c", "start", ""])
+        self.assertEqual(run.call_args.args[0], ["explorer.exe", url])
 
     def test_skips_webbrowser_without_display(self):
         with (
